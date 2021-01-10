@@ -252,7 +252,7 @@ namespace midikraft {
 			if (sequencer->isPartOfDataFileStream(message, import.dataStreamID)) {
 				currentDownload_.push_back(message);
 				downloadNumber_++;
-				if (downloadNumber_ >= import.startItemNo + sequencer->numberOfMidiMessagesPerStreamType(import.dataStreamID)) {
+				if (sequencer->isStreamComplete(currentDownload_, import.dataStreamID)) {
 					auto loadedData = sequencer->loadData(currentDownload_, import.dataStreamID);
 					clearHandlers();
 					auto synth = std::dynamic_pointer_cast<Synth>(sequencer);
@@ -263,11 +263,10 @@ namespace midikraft {
 					clearHandlers();					
 					if (progressHandler) progressHandler->onCancel();
 				}
-				/*else {
+				else if (sequencer->shouldStreamAdvance(currentDownload_, import.dataStreamID)) {
 					startDownloadNextDataItem(midiOutput, sequencer, import.dataStreamID);
-					
-				}*/
-				if (progressHandler) progressHandler->setProgressPercentage(downloadNumber_ / (double)sequencer->numberOfMidiMessagesPerStreamType(import.dataStreamID));
+				}
+				if (progressHandler) progressHandler->setProgressPercentage((downloadNumber_ - import.startItemNo)/ (double)sequencer->numberOfMidiMessagesPerStreamType(import.dataStreamID));
 			}
 		});
 		handles_.push(handle);
