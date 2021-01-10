@@ -26,7 +26,6 @@ namespace midikraft {
 	class Librarian {
 	public:
 		typedef std::function<void(std::vector<PatchHolder>)> TFinishedHandler;
-		typedef std::function<void(std::vector<std::shared_ptr<DataFile>>)> TStepSequencerFinishedHandler;
 
 		Librarian(std::vector<SynthHolder> const &synths) : synths_(synths), currentDownloadBank_(MidiBankNumber::fromZeroBase(0)), downloadNumber_(0), startDownloadNumber_(0), endDownloadNumber_(0) {}
 
@@ -35,7 +34,8 @@ namespace midikraft {
 
 		void downloadEditBuffer(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, TFinishedHandler onFinished);
 
-		void startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, DataFileLoadCapability *sequencer, int dataFileIdentifier, ProgressHandler *progressHandler, TStepSequencerFinishedHandler onFinished);
+		void startDownloadingMultipleDataTypes(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> synth, std::vector<std::pair<int, int>> dataTypeAndItemNo, ProgressHandler *progressHandler, TFinishedHandler onFinished);
+		void startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> sequencer, int dataFileIdentifier, int firstItemNo, ProgressHandler *progressHandler, TFinishedHandler onFinished);
 
 		Synth *sniffSynth(std::vector<MidiMessage> const &messages) const;
 		std::vector<PatchHolder> loadSysexPatchesFromDisk(std::shared_ptr<Synth> synth, std::shared_ptr<AutomaticCategory> automaticCategories);
@@ -46,12 +46,13 @@ namespace midikraft {
 
 	private:
 		void startDownloadNextPatch(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth);
-		void startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, DataFileLoadCapability *sequencer, int dataFileIdentifier);
+		void startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> sequencer, int dataFileIdentifier);
 		void handleNextStreamPart(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, const juce::MidiMessage &message, StreamLoadCapability::StreamType streamType);
 		void handleNextEditBuffer(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, const juce::MidiMessage &editBuffer, MidiBankNumber bankNo);
 		void handleNextBankDump(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, const juce::MidiMessage &bankDump, MidiBankNumber bankNo);
 
 		std::vector<PatchHolder> tagPatchesWithImportFromSynth(std::shared_ptr<Synth> synth, TPatchVector &patches, MidiBankNumber bankNo);
+		std::vector<PatchHolder> tagPatchesWithImportFromSynth(std::shared_ptr<Synth> synth, TPatchVector &patches, std::string bankName, int startIndex);
 		void tagPatchesWithMultiBulkImport(std::vector<PatchHolder> &patches);
 
 		void updateLastPath();
@@ -61,7 +62,7 @@ namespace midikraft {
 		MidiBankNumber currentDownloadBank_;
 		std::stack<MidiController::HandlerHandle> handles_;
 		TFinishedHandler onFinished_;
-		TStepSequencerFinishedHandler onSequencerFinished_;
+		TFinishedHandler onSequencerFinished_;
 		int downloadNumber_;
 		int startDownloadNumber_;
 		int endDownloadNumber_;

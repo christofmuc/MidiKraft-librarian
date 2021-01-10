@@ -57,6 +57,19 @@ namespace midikraft {
 		const MidiBankNumber bankNo_;
 	};
 
+	class FromSynthDataType: public SourceInfo {
+	public:
+		FromSynthDataType(Time timestamp, std::string const &bank, int indexInBank); 
+		virtual std::string md5(Synth *synth) const override;
+		virtual std::string toDisplayString(Synth *synth, bool shortVersion) const override;
+		static std::shared_ptr<FromSynthDataType> fromString(std::string const &jsonString);
+
+	private:
+		const Time timestamp_;
+		const std::string bank_;
+		const int indexInBank_;
+	};
+
 	class FromFileSource : public SourceInfo {
 	public:
 		FromFileSource(std::string const &filename, std::string const &fullpath, MidiProgramNumber program);

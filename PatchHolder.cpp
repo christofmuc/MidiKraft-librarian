@@ -23,12 +23,14 @@ namespace midikraft {
 	const char
 		*kFileSource = "filesource",
 		*kSynthSource = "synthsource",
+		*kSynthDataTypeSource = "synthdatatype",
 		*kBulkSource = "bulksource",
 		*kFileInBulk = "fileInBulk",
 		*kFileName = "filename",
 		*kFullPath = "fullpath",
 		*kTimeStamp = "timestamp",
 		*kBankNumber = "banknumber",
+		*kBankName = "bankname",
 		*kProgramNo = "program";
 
 	std::vector<std::string> kBitIndexNames = { "Lead", "Pad", "Brass", "Organ", "Keys", "Bass", "Arp", "Pluck", "Drone", "Drum", "Bell", "SFX", "Ambient", "Wind",  "Voice" };
@@ -326,6 +328,9 @@ namespace midikraft {
 			else if (obj.HasMember(kBulkSource)) {
 				return FromBulkImportSource::fromString(str);
 			}
+			else if (obj.HasMember(kSynthDataTypeSource)) {
+				return FromSynthDataType::fromString(str);
+			}
 		}
 		return nullptr;
 	}
@@ -512,6 +517,66 @@ namespace midikraft {
 	std::shared_ptr<SourceInfo> FromBulkImportSource::individualInfo() const
 	{
 		return individualInfo_;
+	}
+
+	FromSynthDataType::FromSynthDataType(Time timestamp, std::string const &bank, int indexInBank) : timestamp_(timestamp), bank_(bank), indexInBank_(indexInBank)
+	{
+		rapidjson::Document doc;
+		doc.SetObject();
+		std::string timestring = timestamp.toISO8601(true).toStdString();
+		doc.AddMember(rapidjson::StringRef(kSynthDataTypeSource), true, doc.GetAllocator());
+		doc.AddMember(rapidjson::StringRef(kTimeStamp), rapidjson::Value(timestring.c_str(), (rapidjson::SizeType) timestring.size()), doc.GetAllocator());
+		doc.AddMember(rapidjson::StringRef(kBankName), value(bank_, doc), doc.GetAllocator());
+		doc.AddMember(rapidjson::StringRef(kProgramNo), indexInBank, doc.GetAllocator());
+		jsonRep_ = renderToJson(doc);
+	}
+
+	std::string FromSynthDataType::md5(Synth *synth) const
+	{
+		String displayString(toDisplayString(synth, false));
+		return MD5(displayString.toUTF8()).toHexString().toStdString();
+	}
+
+	std::string FromSynthDataType::toDisplayString(Synth *synth, bool shortVersion) const
+	{
+		ignoreUnused(synth, shortVersion);
+		std::string bank = (boost::format("%s index %d") % bank_ % indexInBank_).str();
+		if (timestamp_.toMilliseconds() != 0) {
+			// https://docs.juce.com/master/classTime.html#afe9d0c7308b6e75fbb5e5d7b76262825
+			return (boost::format("Imported from synth%s on %s") % bank % timestamp_.formatted("%x at %X").toStdString()).str();
+		}
+		else {
+			jassertfalse;
+			// Legacy import, no timestamp was recorded.
+			return (boost::format("Imported from synth%s") % bank).str();
+		}
+	}
+
+	std::shared_ptr<midikraft::FromSynthDataType> FromSynthDataType::fromString(std::string const &jsonString)
+	{
+		rapidjson::Document doc;
+		doc.Parse(jsonString.c_str());
+		if (doc.IsObject()) {
+			auto obj = doc.GetObject();
+			if (obj.HasMember(kSynthDataTypeSource)) {
+				Time timestamp;
+				if (obj.HasMember(kTimeStamp)) {
+					std::string timestring = obj.FindMember(kTimeStamp).operator*().value.GetString();
+					timestamp = Time::fromISO8601(timestring);
+				}
+				std::string bank = "invalid";
+				int index = -1; 
+				if (obj.HasMember(kBankName)) {
+					bank = obj.FindMember(kBankName).operator*().value.GetString();
+				}
+				if (obj.HasMember(kProgramNo)) {
+					index = obj.FindMember(kProgramNo).operator*().value.GetInt();
+				}
+				return std::make_shared<FromSynthDataType>(timestamp, bank, index);
+			}
+		}
+		return nullptr;
+
 	}
 
 }
