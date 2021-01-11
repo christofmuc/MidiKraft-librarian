@@ -34,8 +34,8 @@ namespace midikraft {
 
 		void downloadEditBuffer(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, TFinishedHandler onFinished);
 
-		void startDownloadingMultipleDataTypes(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> synth, std::vector<DataFileLoadCapability::DataFileImportDescription> dataTypeAndItemNo, ProgressHandler *progressHandler, TFinishedHandler onFinished);
-		void startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> sequencer, DataFileLoadCapability::DataFileImportDescription const import, ProgressHandler *progressHandler, TFinishedHandler onFinished);
+		void startDownloadingMultipleDataTypes(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, std::vector<DataFileLoadCapability::DataFileImportDescription> dataTypeAndItemNo, ProgressHandler *progressHandler, TFinishedHandler onFinished);
+		void startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataFileLoadCapability::DataFileImportDescription const import, ProgressHandler *progressHandler, TFinishedHandler onFinished);
 
 		Synth *sniffSynth(std::vector<MidiMessage> const &messages) const;
 		std::vector<PatchHolder> loadSysexPatchesFromDisk(std::shared_ptr<Synth> synth, std::shared_ptr<AutomaticCategory> automaticCategories);
@@ -46,7 +46,7 @@ namespace midikraft {
 
 	private:
 		void startDownloadNextPatch(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth);
-		void startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> sequencer, DataStreamType dataFileIdentifier);
+		void startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> sequencer, DataStreamType dataFileIdentifier);
 		void handleNextStreamPart(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, const juce::MidiMessage &message, StreamLoadCapability::StreamType streamType);
 		void handleNextEditBuffer(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, const juce::MidiMessage &editBuffer, MidiBankNumber bankNo);
 		void handleNextBankDump(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler *progressHandler, const juce::MidiMessage &bankDump, MidiBankNumber bankNo);

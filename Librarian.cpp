@@ -208,7 +208,7 @@ namespace midikraft {
 		}
 	}
 
-	void Librarian::startDownloadingMultipleDataTypes(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> synth, std::vector<DataFileLoadCapability::DataFileImportDescription> imports,
+	void Librarian::startDownloadingMultipleDataTypes(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, std::vector<DataFileLoadCapability::DataFileImportDescription> imports,
 		ProgressHandler *progressHandler, TFinishedHandler onFinished) {
 
 		downloadBankNumber_ = 0;
@@ -236,7 +236,7 @@ namespace midikraft {
 		}
 	}
 
-	void Librarian::startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> sequencer, DataFileLoadCapability::DataFileImportDescription const import, ProgressHandler *progressHandler, TFinishedHandler onFinished)
+	void Librarian::startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataFileLoadCapability::DataFileImportDescription const import, ProgressHandler *progressHandler, TFinishedHandler onFinished)
 	{
 		// First things first - this should not be called more than once at a time, and there should be no other Librarian callback handlers be registered!
 		jassert(handles_.empty());
@@ -247,15 +247,15 @@ namespace midikraft {
 		onSequencerFinished_ = onFinished;
 
 		auto handle = MidiController::makeOneHandle();
-		MidiController::instance()->addMessageHandler(handle, [this, sequencer, progressHandler, midiOutput, import](MidiInput *source, const MidiMessage &message) {
+		MidiController::instance()->addMessageHandler(handle, [this, synth, progressHandler, midiOutput, import](MidiInput *source, const MidiMessage &message) {
 			ignoreUnused(source);
+			auto sequencer = midikraft::Capability::hasCapability<midikraft::DataFileLoadCapability>(synth);
 			if (sequencer->isPartOfDataFileStream(message, import.dataStreamID)) {
 				currentDownload_.push_back(message);
 				downloadNumber_++;
 				if (sequencer->isStreamComplete(currentDownload_, import.dataStreamID)) {
 					auto loadedData = sequencer->loadData(currentDownload_, import.dataStreamID);
 					clearHandlers();
-					auto synth = std::dynamic_pointer_cast<Synth>(sequencer);
 					onSequencerFinished_(tagPatchesWithImportFromSynth(synth, loadedData, import.description, import.startItemNo));
 					if (progressHandler) progressHandler->onSuccess();
 				}
@@ -264,13 +264,13 @@ namespace midikraft {
 					if (progressHandler) progressHandler->onCancel();
 				}
 				else if (sequencer->shouldStreamAdvance(currentDownload_, import.dataStreamID)) {
-					startDownloadNextDataItem(midiOutput, sequencer, import.dataStreamID);
+					startDownloadNextDataItem(midiOutput, synth, import.dataStreamID);
 				}
 				if (progressHandler) progressHandler->setProgressPercentage((downloadNumber_ - import.startItemNo)/ (double)sequencer->numberOfMidiMessagesPerStreamType(import.dataStreamID));
 			}
 		});
 		handles_.push(handle);
-		startDownloadNextDataItem(midiOutput, sequencer, import.dataStreamID);
+		startDownloadNextDataItem(midiOutput, synth, import.dataStreamID);
 	}
 
 	Synth *Librarian::sniffSynth(std::vector<MidiMessage> const &messages) const
@@ -531,17 +531,22 @@ namespace midikraft {
 		}
 	}
 
-	void Librarian::startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<DataFileLoadCapability> sequencer, DataStreamType dataFileIdentifier) {
-		std::vector<MidiMessage> request = sequencer->requestDataItem(downloadNumber_, dataFileIdentifier);
-		auto buffer = MidiHelpers::bufferFromMessages(request);
-		// If this is a synth, it has a throttled send method
-		auto synth = std::dynamic_pointer_cast<Synth>(sequencer);
-		if (synth) {
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), buffer);
+	void Librarian::startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataStreamType dataFileIdentifier) {
+		auto sequencer = midikraft::Capability::hasCapability<midikraft::DataFileLoadCapability>(synth);
+		if (sequencer) {
+			std::vector<MidiMessage> request = sequencer->requestDataItem(downloadNumber_, dataFileIdentifier);
+			auto buffer = MidiHelpers::bufferFromMessages(request);
+			// If this is a synth, it has a throttled send method
+			if (synth) {
+				synth->sendBlockOfMessagesToSynth(midiOutput->name(), buffer);
+			}
+			else {
+				// This is not a synth... fall back to old behavior
+				midiOutput->sendBlockOfMessagesFullSpeed(buffer);
+			}
 		}
 		else {
-			// This is not a synth... fall back to old behavior
-			midiOutput->sendBlockOfMessagesFullSpeed(buffer);
+			jassertfalse;
 		}
 	}
 
