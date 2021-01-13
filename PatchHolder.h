@@ -137,6 +137,7 @@ namespace midikraft {
 		int64 categoriesAsBitfield() const;
 		int64 userDecisionAsBitfield() const;
 		void setCategoriesFromBitfield(int64 bitfield);
+		void makeSetOfCategoriesFromBitfield(std::set<Category> &cats, int64 bitfield) const;
 		
 		void setUserDecisionsFromBitfield(int64 bitfield);
 
@@ -149,8 +150,6 @@ namespace midikraft {
 		std::string md5() const;
 		
 	private:
-		void setCategoriesFromBitfield(std::set<Category> &cats, int64 bitfield);
-
 		std::shared_ptr<DataFile> patch_;
 		std::shared_ptr<Synth> synth_;
 		std::string name_;
