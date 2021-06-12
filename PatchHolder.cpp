@@ -380,8 +380,12 @@ namespace midikraft {
 
 	std::string FromFileSource::toDisplayString(Synth *, bool shortVersion) const
 	{
-		ignoreUnused(shortVersion);
-		return (boost::format("Imported from file %s") % filename_).str();
+		if (shortVersion) {
+			return (boost::format("File %s") % filename_).str();
+		}
+		else {
+			return (boost::format("Imported from file %s") % filename_).str();
+		}
 	}
 
 	std::shared_ptr<FromFileSource> FromFileSource::fromString(std::string const &jsonString)
