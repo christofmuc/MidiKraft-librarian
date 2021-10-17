@@ -45,10 +45,10 @@ namespace midikraft {
 		if (!strcmp(categoryName, "FX")) categoryName = "SFX";
 
 		// Check if this is a valid category
-		for (auto acat : detector->predefinedCategoryVector()) {
-			if (acat.category == categoryName) {
+		for (auto acat : detector->loadedRules()) {
+			if (acat.category().category() == categoryName) {
 				// Found, great!
-				outCategory = acat;
+				outCategory = acat.category();
 				return true;
 			}
 		}
@@ -70,7 +70,7 @@ namespace midikraft {
 	*   1  - First version with header containing name of file format and version number, else it is identical to version 0 containing the patches in the field "Library" (to mark it is not a bank!)
 	*/
 
-	std::vector<midikraft::PatchHolder> PatchInterchangeFormat::load(std::shared_ptr<Synth> activeSynth, std::string const &filename, std::shared_ptr<AutomaticCategory> detector)
+	std::vector<midikraft::PatchHolder> PatchInterchangeFormat::load(std::map<std::string, std::shared_ptr<Synth>> activeSynths, std::string const &filename, std::shared_ptr<AutomaticCategory> detector)
 	{
 		std::vector<midikraft::PatchHolder> result;
 
@@ -91,20 +91,26 @@ namespace midikraft {
 					SimpleLogger::instance()->postMessage("This is not a PatchInterchangeFormat JSON file - no header defined. Aborting.");
 					return {};
 				}
-				if (!jsonDoc.HasMember(kFileFormat) || !jsonDoc[kFileFormat].IsString()) {
+				rapidjson::Value header;
+				if (jsonDoc[kHeader].IsObject()) {
+					// Proper format, use the header object, not the manually hacked header which was needed to get the files back into version 1.11.0
+					// Eventually, the header = jsonDoc special case should be removed again.
+					header = jsonDoc[kHeader].GetObject();
+				}
+				if (!header.HasMember(kFileFormat) || !header[kFileFormat].IsString()) {
 					SimpleLogger::instance()->postMessage("File header block has no string member to define FileFormat. Aborting.");
 					return {};
 				}
-				if (jsonDoc[kFileFormat].GetString() != kPIF) {
+				if (header[kFileFormat] != kPIF) {
 					SimpleLogger::instance()->postMessage("File header defines different FileFormat than PatchInterchangeFormat. Aborting.");
 					return {};
 				}
-				if (!jsonDoc.HasMember(kVersion) || !jsonDoc[kVersion].IsInt()) {
+				if (!header.HasMember(kVersion) || !header[kVersion].IsInt()) {
 					SimpleLogger::instance()->postMessage("File header has no integer-values member defining file Version. Aborting.");
 					return {};
 				}
 				// Header all good, let's read the Version of the format
-				version = jsonDoc[kVersion].GetInt();
+				version = header[kVersion].GetInt();
 			}
 
 			rapidjson::Value patchArray;
@@ -122,15 +128,17 @@ namespace midikraft {
 			}
 
 			if (patchArray.IsArray()) {
-				for (auto item = jsonDoc.Begin(); item != jsonDoc.End(); item++) {
+				for (auto item = patchArray.Begin(); item != patchArray.End(); item++) {
 					if (!item->HasMember(kSynth)) {
 						SimpleLogger::instance()->postMessage("Skipping patch which has no 'Synth' field");
 						continue;
 					}
-					if (activeSynth->getName() != (*item)[kSynth].GetString()) {
-						SimpleLogger::instance()->postMessage((boost::format("Skipping patch which is for synth %s and not for %s") % (*item)["Synth"].GetString() % activeSynth->getName()).str());
+					const char* synthname = (*item)[kSynth].GetString();
+					if (activeSynths.find(synthname) == activeSynths.end()) {
+						SimpleLogger::instance()->postMessage((boost::format("Skipping patch which is for synth %s and not for any present in the list given") % synthname).str());
 						continue;
 					}
+					auto activeSynth = activeSynths[synthname];
 					if (!item->HasMember(kName)) {
 						SimpleLogger::instance()->postMessage("Skipping patch which has no 'Name' field");
 						continue;
@@ -179,7 +187,7 @@ namespace midikraft {
 					if (item->HasMember(kCategories)) {
 						auto cats = (*item)[kCategories].GetArray();
 						for (auto cat = cats.Begin(); cat != cats.End(); cat++) {
-							midikraft::Category category("", Colours::aliceblue);
+							midikraft::Category category(nullptr);
 							if (findCategory(detector, cat->GetString(), category)) {
 								categories.push_back(category);
 							}
@@ -193,7 +201,7 @@ namespace midikraft {
 					if (item->HasMember(kNonCategories)) {
 						auto cats = (*item)[kNonCategories].GetArray();
 						for (auto cat = cats.Begin(); cat != cats.End(); cat++) {
-							midikraft::Category category("", Colours::aliceblue);
+							midikraft::Category category(nullptr);
 							if (findCategory(detector, cat->GetString(), category)) {
 								nonCategories.push_back(category);
 							}
@@ -272,30 +280,28 @@ namespace midikraft {
 			addToJson(kName, patch.name(), patchJson, doc);
 			patchJson.AddMember(rapidjson::StringRef(kFavorite), patch.isFavorite() ? 1 : 0, doc.GetAllocator());
 			patchJson.AddMember(rapidjson::StringRef(kPlace), patch.patchNumber().toZeroBased(), doc.GetAllocator());
-			int64 categoriesSet = patch.categoriesAsBitfield();
-			int64 userDecisions = patch.userDecisionAsBitfield();
-			if (categoriesSet & userDecisions) {
+ 			auto categoriesSet = patch.categories();
+			auto userDecisions = patch.userDecisionSet();
+			auto userDefinedCategories = category_intersection(categoriesSet, userDecisions);
+			if (!userDefinedCategories.empty()) {
 				// Here is a list of categories to write
 				rapidjson::Value categoryList;
 				categoryList.SetArray();
-				std::set<Category> userDefinedCategories;
-				patch.makeSetOfCategoriesFromBitfield(userDefinedCategories, categoriesSet & userDecisions);
 				for (auto cat : userDefinedCategories) {
 					rapidjson::Value catValue;
-					catValue.SetString(cat.category.c_str(), doc.GetAllocator());
+					catValue.SetString(cat.category().c_str(), doc.GetAllocator());
 					categoryList.PushBack(catValue, doc.GetAllocator());
 				}
 				patchJson.AddMember(rapidjson::StringRef(kCategories), categoryList, doc.GetAllocator());
 			}
-			if ((~categoriesSet) & userDecisions) {
+			auto userDefinedNonCategories = category_difference(userDecisions, categoriesSet);
+			if (!userDefinedNonCategories.empty()) {
 				// Here is a list of non-categories to write
 				rapidjson::Value nonCategoryList;
 				nonCategoryList.SetArray();
-				std::set<Category> userDefinedNonCategories;
-				patch.makeSetOfCategoriesFromBitfield(userDefinedNonCategories, (~categoriesSet) & userDecisions);
 				for (auto cat : userDefinedNonCategories) {
 					rapidjson::Value catValue;
-					catValue.SetString(cat.category.c_str(), doc.GetAllocator());
+					catValue.SetString(cat.category().c_str(), doc.GetAllocator());
 					nonCategoryList.PushBack(catValue, doc.GetAllocator());
 				}
 				patchJson.AddMember(rapidjson::StringRef(kNonCategories), nonCategoryList, doc.GetAllocator());

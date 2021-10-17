@@ -83,7 +83,7 @@ namespace midikraft {
 			handles_.push(handle);
 			currentDownloadBank_ = bankNo;
 			auto messages = streamLoading->requestStreamElement(bankNo.toZeroBased(), StreamLoadCapability::StreamType::BANK_DUMP);
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), MidiHelpers::bufferFromMessages(messages));
+			synth->sendBlockOfMessagesToSynth(midiOutput->name(), messages);
 		}
 		else if (handshakeLoadingRequired) {
 			// These are proper protocols that are implemented - each message we get from the synth has to be answered by an appropriate next message
@@ -98,8 +98,7 @@ namespace midikraft {
 					}
 					// Send an answer if the handshake handler constructed one
 					if (!answer.empty()) {
-						auto buffer = MidiHelpers::bufferFromMessages(answer);
-						synth->sendBlockOfMessagesToSynth(midiOutput->name(), buffer);
+						synth->sendBlockOfMessagesToSynth(midiOutput->name(), answer);
 					}
 					// Update progress handler
 					progressHandler->setProgressPercentage(state->progress());
@@ -128,7 +127,7 @@ namespace midikraft {
 		else if (bankCapableSynth) {
 			// This is a mixture - you send one message (bank request), and then you get either one message back (like Kawai K3) or a stream of messages with
 			// one message per patch (e.g. Access Virus or Matrix1000)
-			MidiBuffer buffer = MidiHelpers::bufferFromMessages(bankCapableSynth->requestBankDump(bankNo));
+			auto buffer = bankCapableSynth->requestBankDump(bankNo);
 			std::string outname = midiOutput->name();
 			RunWithRetry::start([this, synth, outname, buffer]() {
 					synth->sendBlockOfMessagesToSynth(outname, buffer);
@@ -186,7 +185,7 @@ namespace midikraft {
 			handles_.push(handle);
 			currentDownload_.clear();
 			auto messages = streamLoading->requestStreamElement(0, StreamLoadCapability::StreamType::EDIT_BUFFER_DUMP);
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), MidiHelpers::bufferFromMessages(messages));
+			synth->sendBlockOfMessagesToSynth(midiOutput->name(), messages);
 		} else if (editBufferCapability) {
 			MidiController::instance()->addMessageHandler(handle, [this, synth, progressHandler, midiOutput](MidiInput *source, const juce::MidiMessage &editBuffer) {
 				ignoreUnused(source);
@@ -201,7 +200,7 @@ namespace midikraft {
 		}
 		else if (programDumpCapability && programChangeCapability) {
 			auto messages = programDumpCapability->requestPatch(programChangeCapability->lastProgramChange().toZeroBased());
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), MidiHelpers::bufferFromMessages(messages));
+			synth->sendBlockOfMessagesToSynth(midiOutput->name(), messages);
 		}
 		else {
 			SimpleLogger::instance()->postMessage("The " + synth->getName() + " has no way to request the edit buffer or program place");
@@ -330,20 +329,18 @@ namespace midikraft {
 		std::vector<PatchHolder> result_;
 	};
 
-	void Librarian::updateLastPath() {
-		if (lastPath_.empty()) {
+	void Librarian::updateLastPath(std::string &lastPathVariable, std::string const &settingsKey) {
 			// Read from settings
-			lastPath_ = Settings::instance().get("lastImportPath", "");
-			if (lastPath_.empty()) {
+		lastPathVariable = Settings::instance().get(settingsKey, "");
+		if (lastPathVariable.empty()) {
 				// Default directory
-				lastPath_ = File::getSpecialLocation(File::userDocumentsDirectory).getFullPathName().toStdString();
+			lastPathVariable = File::getSpecialLocation(File::userDocumentsDirectory).getFullPathName().toStdString();
 			}
 		}
-	}
 
 	std::vector<PatchHolder> Librarian::loadSysexPatchesFromDisk(std::shared_ptr<Synth> synth, std::shared_ptr<AutomaticCategory> automaticCategories)
 	{
-		updateLastPath();
+		updateLastPath(lastPath_, "lastImportPath");
 
 		std::string standardFileExtensions = "*.syx;*.mid;*.zip;*.txt;*.json";
 		auto legacyLoader = midikraft::Capability::hasCapability<LegacyLoaderCapability>(synth);
@@ -392,7 +389,9 @@ namespace midikraft {
 			}
 		}
 		else if (File(fullpath).getFileExtension() == ".json") {
-			return PatchInterchangeFormat::load(synth, fullpath, automaticCategories);
+			std::map<std::string, std::shared_ptr<Synth>> synths;
+			synths[synth->getName()] = synth;
+			return PatchInterchangeFormat::load(synths, fullpath, automaticCategories);
 		}
 		else {
 			auto messagesLoaded = Sysex::loadSysex(fullpath);
@@ -439,39 +438,23 @@ namespace midikraft {
 		return result;
 	}
 
-	class ProgressWindow: public ThreadWithProgressWindow {
-	public:
-		ProgressWindow(String title, double *progress) : ThreadWithProgressWindow(title, true, false), progress_(progress) {}
-
-		virtual void run() override
-		{
-			while (!threadShouldExit() && *progress_ < 1.0) {
-				setProgress(*progress_);
-				Thread::sleep(50);
 			}
+		return result;
 		}	
 
-	private:
-		double *progress_;
-	};
+	class ExportSysexFilesInBackground: public ThreadWithProgressWindow {
+	public:
+		ExportSysexFilesInBackground(String title, File dest, Librarian::ExportParameters params, std::vector<PatchHolder> const &patches) : ThreadWithProgressWindow(title, true, false),
+			destination(dest), params(params), patches(patches)
+		{}
 
-	void Librarian::saveSysexPatchesToDisk(std::vector<PatchHolder> const &patches)
+		virtual void run() override
 	{
-		updateLastPath();
-		FileChooser sysexChooser("Please enter the name of the zip file to create...", File(lastPath_), ".zip");
-		if (sysexChooser.browseForFileToSave(true)) {
-			double progress = 0.0;
-			ProgressWindow progressWindow("Compressing ZIP File", &progress);
-			progressWindow.launchThread();
-
-			File zipFile = sysexChooser.getResult();
-			lastPath_ = zipFile.getFullPathName().toStdString();
-			Settings::instance().set("lastImportPath", lastPath_);
-			if (zipFile.existsAsFile()) {
-				zipFile.deleteFile();
+			if (destination.existsAsFile()) {
+				destination.deleteFile();
 			}
-			else if (zipFile.exists()) {
-				// This is a directory
+			else if (destination.exists() && params.fileOption != Librarian::MANY_FILES) {
+				// This is a directory, but we didn't want one
 				SimpleLogger::instance()->postMessage("Can't overwrite a directory, please choose a different name!");
 				return;
 			}
@@ -481,30 +464,179 @@ namespace midikraft {
 
 			// Now, iterate over the list of patches and pack them one by one into the zip file!
 			ZipFile::Builder builder;
-			for (auto patch : patches) {
+			std::vector<MidiMessage> allMessages;
+			int count = 0;
+			for (const auto& patch : patches) {
 				if (patch.patch()) {
-					auto sysexMessages = patch.synth()->patchToSysex(patch.patch(), nullptr);
-					String fileName = patch.name();
-					std::string result = Sysex::saveSysexIntoNewFile(tempDir.name(), File::createLegalFileName(fileName.trim()).toStdString(), sysexMessages);
-					//TODO what a peculiar return type
-					if (result != "Failure") {
-						builder.addFile(File(result), 6);
+					std::vector<MidiMessage> sysexMessages;
+					switch (params.formatOption) {
+					case Librarian::PROGRAM_DUMPS:
+					{
+						// Let's see if we have program dump capability for the synth!
+						auto pdc = Capability::hasCapability<ProgramDumpCabability>(patch.synth());
+						if (pdc) {
+							sysexMessages = pdc->patchToProgramDumpSysex(patch.patch(), patch.patchNumber());
+							break;
+						}
+						// fall through do default then
 					}
-					else {
-						jassertfalse;
+					default:
+					case Librarian::EDIT_BUFFER_DUMPS:
+						// Every synth is forced to have an implementation for this
+						sysexMessages = patch.synth()->patchToSysex(patch.patch(), nullptr);
+						break;
+					}
+
+					String fileName = patch.name();
+					switch (params.fileOption) {
+					case Librarian::MANY_FILES:
+					{
+						std::string result = Sysex::saveSysexIntoNewFile(destination.getFullPathName().toStdString(), File::createLegalFileName(fileName.trim()).toStdString(), sysexMessages);
+						break;
+					}
+					case Librarian::ZIPPED_FILES:
+					{
+					std::string result = Sysex::saveSysexIntoNewFile(tempDir.name(), File::createLegalFileName(fileName.trim()).toStdString(), sysexMessages);
+						builder.addFile(File(result), 6);
+						break;
+					}
+					case Librarian::MID_FILE:
+					case Librarian::ONE_FILE:
+					{
+						std::copy(sysexMessages.begin(), sysexMessages.end(), std::back_inserter(allMessages));
+						break;
+					}
 					}
 				}
-				else {
-					jassertfalse;
+				setProgress(count++ / (double)patches.size());
+				if (threadShouldExit()) {
+					break;
+				}
+			}
+			switch (params.fileOption)
+			{
+			case Librarian::ZIPPED_FILES:
+			{
+				FileOutputStream targetStream(destination);
+				builder.writeToStream(targetStream, nullptr);
+				break;
+			}
+			case Librarian::ONE_FILE:
+			{
+				Sysex::saveSysex(destination.getFullPathName().toStdString(), allMessages);
+				break;
+			}
+			case Librarian::MID_FILE:
+			{
+				MidiFile midiFile;
+				MidiMessageSequence mmSeq;
+				for (const auto& msg : allMessages) {
+					mmSeq.addEvent(msg, 0.0);
+				}
+
+				// Add to track 1 of MIDI file
+				midiFile.addTrack(mmSeq);
+				midiFile.setTicksPerQuarterNote(96);
+
+				// Done, write to file
+				File file(destination);
+				if (file.existsAsFile()) {
+					file.deleteFile();
+				}
+				FileOutputStream stream(file);
+				if (!midiFile.writeTo(stream, 1)) {
+					SimpleLogger::instance()->postMessage("ERROR: Failed to write SMF file to " + destination.getFullPathName());
+				}
+				stream.flush();
+			}
+			default:
+				// Nothing to do
+				break;
+			}
+		}
+
+	private:
+		File destination;
+		Librarian::ExportParameters params;
+		std::vector<PatchHolder> const &patches;
+	};
+
+	void Librarian::saveSysexPatchesToDisk(ExportParameters params, std::vector<PatchHolder> const &patches)
+	{
+		File destination;
+		switch (params.fileOption) {
+		case MANY_FILES:
+		{ 
+			updateLastPath(lastExportDirectory_, "lastExportDirectory");
+			FileChooser sysexChooser("Please choose a directory for the files that will be created", File(lastExportDirectory_));
+			if (!sysexChooser.browseForDirectory()) {
+				return;
+			}
+			destination = sysexChooser.getResult();
+			Settings::instance().set("lastExportDirectory", destination.getFullPathName().toStdString());
+			break;
+		}
+		case ZIPPED_FILES:
+		{
+			updateLastPath(lastExportZipFilename_, "lastExportZipFilename");
+			FileChooser sysexChooser("Please enter the name of the zip file to create...", File(lastExportZipFilename_), "*.zip");
+			if (!sysexChooser.browseForFileToSave(true)) {
+				return;
+			}
+			destination = sysexChooser.getResult();
+			Settings::instance().set("lastExportZipFilename", destination.getFullPathName().toStdString());
+			break;
+					}
+		case ONE_FILE:
+		{
+			updateLastPath(lastExportSyxFilename_, "lastExportSyxFilename");
+			FileChooser sysexChooser("Please enter the name of the syx file to create...", File(lastExportSyxFilename_), "*.syx");
+			if (!sysexChooser.browseForFileToSave(true)) {
+				return;
+				}
+			destination = sysexChooser.getResult();
+			Settings::instance().set("lastExportSyxFilename", destination.getFullPathName().toStdString());
+			break;
+		}
+		case MID_FILE:
+		{
+			updateLastPath(lastExportMidFilename_, "lastExportMidFilename");
+			FileChooser sysexChooser("Please enter the name of the MIDI file to create...", File(lastExportSyxFilename_), "*.mid");
+			if (!sysexChooser.browseForFileToSave(true)) {
+				return;
+			}
+			destination = sysexChooser.getResult();
+			Settings::instance().set("lastExportMidFilename", destination.getFullPathName().toStdString());
 				}
 			}
 
-			FileOutputStream targetStream(zipFile);			
-			builder.writeToStream(targetStream, &progress);
-			progressWindow.stopThread(200);
+		// This is actually synchronous, we just launch it in a thread so the progress UI will still update.
+		ExportSysexFilesInBackground progressWindow("Exporting...", destination, params, patches);
+
+		if (progressWindow.runThread()) {
+			// Done, now just wrap up
+			switch (params.fileOption) {
+			case MANY_FILES:
+				// Nothing todo, just display success
+				AlertWindow::showMessageBox(AlertWindow::InfoIcon, "Patches exported",
+					(boost::format("All %d patches selected have been exported into the following directory:\n\n%s\n\nThese files can be re-imported into another KnobKraft Orm instance or else\n"
+						"the patches can be sent into the synth with a sysex tool") % patches.size() % destination.getFullPathName().toStdString()).str());
+				break;
+			case ZIPPED_FILES: {
 			AlertWindow::showMessageBox(AlertWindow::InfoIcon, "Patches exported",
 				(boost::format("All %d patches selected have been exported into the following: ZIP file:\n\n%s\n\nThis file can be re-imported into another KnobKraft Orm instance or else\n"
-					"the patches can be sent into the edit buffer of the synth with a sysex tool") % patches.size() % zipFile.getFullPathName().toStdString()).str());
+						"the patches can be sent into the synth with a sysex tool") % patches.size() % destination.getFullPathName().toStdString()).str());
+				break;
+			}
+			case MID_FILE:
+			case ONE_FILE:
+			{
+				AlertWindow::showMessageBox(AlertWindow::InfoIcon, "Patches exported",
+					(boost::format("All %d patches selected have been exported into the following file:\n\n%s\n\nThis file can be re-imported into another KnobKraft Orm instance or else\n"
+						"the patches can be sent into the synth with a sysex tool") % patches.size() % destination.getFullPathName().toStdString()).str());
+				break;
+			}
+			}
 		}
 	}
 
@@ -543,25 +675,23 @@ namespace midikraft {
 
 		// Send messages
 		if (!messages.empty()) {
-			auto buffer = MidiHelpers::bufferFromMessages(messages);
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), buffer);
+			synth->sendBlockOfMessagesToSynth(midiOutput->name(), messages);
 		}
 	}
 
 	void Librarian::startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataStreamType dataFileIdentifier) {
 		auto sequencer = midikraft::Capability::hasCapability<midikraft::DataFileLoadCapability>(synth);
 		if (sequencer) {
-			std::vector<MidiMessage> request = sequencer->requestDataItem(downloadNumber_, dataFileIdentifier);
-			auto buffer = MidiHelpers::bufferFromMessages(request);
-			// If this is a synth, it has a throttled send method
-			if (synth) {
-				synth->sendBlockOfMessagesToSynth(midiOutput->name(), buffer);
-			}
-			else {
-				// This is not a synth... fall back to old behavior
-				midiOutput->sendBlockOfMessagesFullSpeed(buffer);
-			}
+		std::vector<MidiMessage> request = sequencer->requestDataItem(downloadNumber_, dataFileIdentifier);
+		// If this is a synth, it has a throttled send method
+		if (synth) {
+			synth->sendBlockOfMessagesToSynth(midiOutput->name(), request);
 		}
+		else {
+			// This is not a synth... fall back to old behavior
+			midiOutput->sendBlockOfMessagesFullSpeed(request);
+		}
+	}
 		else {
 			jassertfalse;
 		}
@@ -590,7 +720,7 @@ namespace midikraft {
 				else if (streamLoading->shouldStreamAdvance(currentDownload_, streamType)) {
 					downloadNumber_++;
 					auto messages = streamLoading->requestStreamElement(downloadNumber_, streamType);
-					synth->sendBlockOfMessagesToSynth(midiOutput->name(), MidiHelpers::bufferFromMessages(messages));
+					synth->sendBlockOfMessagesToSynth(midiOutput->name(), messages);
 					if (progressTotal == -1 && progressHandler) progressHandler->setProgressPercentage(downloadNumber_ / (double)synth->numberOfPatches());
 				}
 			}
@@ -657,8 +787,6 @@ namespace midikraft {
 	std::vector<PatchHolder> Librarian::tagPatchesWithImportFromSynth(std::shared_ptr<Synth> synth, TPatchVector &patches, MidiBankNumber bankNo) {
 		std::vector<PatchHolder> result;
 		auto now = Time::getCurrentTime();
-		//TODO - this probably should have been handed down from the main program?
-		auto detector = std::make_shared<midikraft::AutomaticCategory>();
 		int i = 0;
 		for (auto patch : patches) {
 			MidiProgramNumber place = MidiProgramNumber::fromZeroBase(i++);
@@ -666,7 +794,7 @@ namespace midikraft {
 			if (realpatch) {
 				place = realpatch->patchNumber();
 			}
-			result.push_back(PatchHolder(synth, std::make_shared<FromSynthSource>(now, bankNo), patch, bankNo, place, detector));
+			result.push_back(PatchHolder(synth, std::make_shared<FromSynthSource>(now, bankNo), patch, bankNo, place));
 		}
 		return result;
 	}

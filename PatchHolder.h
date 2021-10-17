@@ -11,6 +11,7 @@
 #include "Patch.h"
 #include "MidiBankNumber.h"
 #include "AutomaticCategory.h"
+#include "nlohmann/json.hpp"
 
 #include <set>
 
@@ -129,26 +130,21 @@ namespace midikraft {
 
 		bool hasCategory(Category const &category) const;
 		void setCategory(Category const &category, bool hasIt);
+		void setCategories(std::set<Category> const &cats);
 		void clearCategories();
 		std::set<Category> categories() const;
+		std::set<Category> userDecisionSet() const;
 		void setUserDecision(Category const &clicked);
+		void setUserDecisions(std::set<Category> const &cats);
 
-		// Bitfield database support. This is a bit too easy, and not really high performance, but for now...
-		int64 categoriesAsBitfield() const;
-		int64 userDecisionAsBitfield() const;
-		void setCategoriesFromBitfield(int64 bitfield);
-		void makeSetOfCategoriesFromBitfield(std::set<Category> &cats, int64 bitfield) const;
-		
-		void setUserDecisionsFromBitfield(int64 bitfield);
-
-		static juce::int64 categorySetAsBitfield(std::set<Category> const &categories);
-		
 		std::shared_ptr<SourceInfo> sourceInfo() const;
 
 		bool autoCategorizeAgain(std::shared_ptr<AutomaticCategory> detector); // Returns true if categories have changed!
 		
 		std::string md5() const;
-		
+		std::string createDragInfoString() const;
+		static nlohmann::json dragInfoFromString(std::string s);
+
 	private:
 		std::shared_ptr<DataFile> patch_;
 		std::shared_ptr<Synth> synth_;

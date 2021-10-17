@@ -17,6 +17,7 @@
 #include <boost/format.hpp>
 
 #include "RapidjsonHelper.h"
+#include "nlohmann/json.hpp"
 
 namespace midikraft {
 
@@ -32,33 +33,6 @@ namespace midikraft {
 		*kBankNumber = "banknumber",
 		*kBankName = "bankname",
 		*kProgramNo = "program";
-
-	std::vector<std::string> kBitIndexNames = { "Lead", "Pad", "Brass", "Organ", "Keys", "Bass", "Arp", "Pluck", "Drone", "Drum", "Bell", "SFX", "Ambient", "Wind",  "Voice" };
-
-	int bitIndexForCategory(Category &category) {
-		for (int i = 0; i < kBitIndexNames.size(); i++) {
-			if (category.category == kBitIndexNames[i]) {
-				return i;
-			}
-		}
-		return -1;
-	}
-
-	juce::int64 PatchHolder::categorySetAsBitfield(std::set<Category> const &categories)
-	{
-		uint64 mask = 0;
-		for (auto cat : categories) {
-			int bitindex = bitIndexForCategory(cat);
-			if (bitindex != -1) {
-				mask |= 1LL << bitindex; 
-				jassert(bitindex >= 0 && bitindex < 63);
-			}
-			else {
-				jassertfalse;
-			}
-		}
-		return mask;
-	}
 
 	PatchHolder::PatchHolder(std::shared_ptr<Synth> activeSynth, std::shared_ptr<SourceInfo> sourceInfo, std::shared_ptr<DataFile> patch, 
 		MidiBankNumber bank, MidiProgramNumber place, std::shared_ptr<AutomaticCategory> detector /* = nullptr */)
@@ -192,6 +166,11 @@ namespace midikraft {
 		}
 	}
 
+	void PatchHolder::setCategories(std::set<Category> const &cats)
+	{
+		categories_ = cats;
+	}
+
 	void PatchHolder::clearCategories()
 	{
 		categories_.clear();
@@ -202,38 +181,9 @@ namespace midikraft {
 		return categories_;
 	}
 
-	int64 PatchHolder::categoriesAsBitfield() const {
-		return categorySetAsBitfield(categories_);
-	}
-
-	juce::int64 PatchHolder::userDecisionAsBitfield() const
+	std::set<midikraft::Category> PatchHolder::userDecisionSet() const
 	{
-		return categorySetAsBitfield(userDecisions_);
-	}
-
-	void PatchHolder::setCategoriesFromBitfield(int64 bitfield) {
-		makeSetOfCategoriesFromBitfield(categories_, bitfield);
-	}
-
-	void PatchHolder::setUserDecisionsFromBitfield(int64 bitfield)
-	{
-		makeSetOfCategoriesFromBitfield(userDecisions_, bitfield);
-	}
-
-	void PatchHolder::makeSetOfCategoriesFromBitfield(std::set<Category> &cats, int64 bitfield) const
-	{
-		cats.clear();
-		for (int i = 0; i < 63; i++) {
-			if (bitfield & (1LL << i)) {
-				// This bit is set, find the category that has this bitindex
-				if (i < kBitIndexNames.size()) {
-					cats.insert(Category(kBitIndexNames[i], AutomaticCategory::colorForIndex(i)));
-				}
-				else {
-					jassertfalse;
-				}
-			}
-		}
+		return userDecisions_;
 	}
 
 	std::shared_ptr<SourceInfo> PatchHolder::sourceInfo() const
@@ -272,9 +222,37 @@ namespace midikraft {
 		return synth_->calculateFingerprint(patch_);
 	}
 
-	void PatchHolder::setUserDecision(Category const &clicked)
+	std::string PatchHolder::createDragInfoString() const
+	{
+		// The drag info should be... "PATCH", synth, type, and md5
+		nlohmann::json dragInfo = {
+			{ "drag_type", "PATCH"},
+			{ "synth", synth_->getName() },
+			{ "data_type", patch_->dataTypeID()},
+			{ "patch_name", patch_->name()},
+			{ "md5", md5() }
+		};
+		return dragInfo.dump();
+	}
+
+	nlohmann::json PatchHolder::dragInfoFromString(std::string s) {
+		try {
+			return nlohmann::json::parse(s);
+		}
+		catch (nlohmann::json::parse_error& e) {
+			SimpleLogger::instance()->postMessage("Error parsing drop target: " + String(e.what()));
+			return {};
+		}
+	}
+
+	void PatchHolder::setUserDecision(Category const& clicked)
 	{
 		userDecisions_.insert(clicked);
+	}
+
+	void PatchHolder::setUserDecisions(std::set<Category> const &cats)
+	{
+		userDecisions_ = cats;
 	}
 
 	Favorite::Favorite() : favorite_(TFavorite::DONTKNOW)
@@ -458,8 +436,10 @@ namespace midikraft {
 		std::string timestring = timestamp.toISO8601(true).toStdString();
 		doc.AddMember(rapidjson::StringRef(kBulkSource), true, doc.GetAllocator());
 		doc.AddMember(rapidjson::StringRef(kTimeStamp), rapidjson::Value(timestring.c_str(), (rapidjson::SizeType) timestring.size()), doc.GetAllocator());
-		std::string subinfo = individualInfo->toString();
-		doc.AddMember(rapidjson::StringRef(kFileInBulk), rapidjson::Value(subinfo.c_str(), (rapidjson::SizeType) subinfo.size()), doc.GetAllocator());
+		if (individualInfo) {
+			std::string subinfo = individualInfo->toString();
+			doc.AddMember(rapidjson::StringRef(kFileInBulk), rapidjson::Value(subinfo.c_str(), (rapidjson::SizeType)subinfo.size()), doc.GetAllocator());
+		} 
 		jsonRep_ = renderToJson(doc);
 	}
 
@@ -473,7 +453,7 @@ namespace midikraft {
 	std::string FromBulkImportSource::toDisplayString(Synth *synth, bool shortVersion) const
 	{
 		if (timestamp_.toMilliseconds() != 0) {
-			if (shortVersion) {
+			if (shortVersion || !individualInfo_) {
 				// https://docs.juce.com/master/classTime.html#afe9d0c7308b6e75fbb5e5d7b76262825
 				return (boost::format("Bulk import (%s)") % timestamp_.formatted("%x at %X").toStdString()).str();
 			}
