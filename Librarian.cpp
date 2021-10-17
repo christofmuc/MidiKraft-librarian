@@ -208,13 +208,13 @@ namespace midikraft {
 	}
 
 	void Librarian::startDownloadingMultipleDataTypes(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, std::vector<DataFileLoadCapability::DataFileImportDescription> imports,
-		ProgressHandler *progressHandler, TFinishedHandler onFinished) {
+		ProgressHandler *progressHandler, TFinishedHandler onFinished, std::shared_ptr<AutomaticCategory> automaticCategories) {
 
 		downloadBankNumber_ = 0;
 		if (!imports.empty()) {
 			currentDownloadedPatches_.clear();
 			auto device = std::dynamic_pointer_cast<NamedDeviceCapability>(synth);
-			nextBankHandler_ = [this, midiOutput, synth, imports, device, progressHandler, onFinished](std::vector<PatchHolder> patchesLoaded) {
+			nextBankHandler_ = [this, midiOutput, synth, imports, device, progressHandler, onFinished, automaticCategories](std::vector<PatchHolder> patchesLoaded) {
 				std::copy(patchesLoaded.begin(), patchesLoaded.end(), std::back_inserter(currentDownloadedPatches_));
 				downloadBankNumber_++;
 				if (downloadBankNumber_ == imports.size()) {
@@ -226,16 +226,16 @@ namespace midikraft {
 				else {
 					if (!progressHandler->shouldAbort()) {
 						progressHandler->setMessage((boost::format("Importing %s from %s...") % imports[downloadBankNumber_].description % device->getName()).str());
-						startDownloadingSequencerData(midiOutput, synth, imports[downloadBankNumber_], progressHandler, nextBankHandler_);
+						startDownloadingSequencerData(midiOutput, synth, imports[downloadBankNumber_], progressHandler, nextBankHandler_, automaticCategories);
 					}
 				}
 			};
 			progressHandler->setMessage((boost::format("Importing %s from %s...") % imports[0].description % device->getName()).str());
-			startDownloadingSequencerData(midiOutput, synth, imports[0], progressHandler, nextBankHandler_);
+			startDownloadingSequencerData(midiOutput, synth, imports[0], progressHandler, nextBankHandler_, automaticCategories);
 		}
 	}
 
-	void Librarian::startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataFileLoadCapability::DataFileImportDescription const import, ProgressHandler *progressHandler, TFinishedHandler onFinished)
+	void Librarian::startDownloadingSequencerData(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataFileLoadCapability::DataFileImportDescription const import, ProgressHandler *progressHandler, TFinishedHandler onFinished, std::shared_ptr<AutomaticCategory> automaticCategories)
 	{
 		// First things first - this should not be called more than once at a time, and there should be no other Librarian callback handlers be registered!
 		jassert(handles_.empty());
@@ -246,7 +246,7 @@ namespace midikraft {
 		onSequencerFinished_ = onFinished;
 
 		auto handle = MidiController::makeOneHandle();
-		MidiController::instance()->addMessageHandler(handle, [this, synth, progressHandler, midiOutput, import](MidiInput *source, const MidiMessage &message) {
+		MidiController::instance()->addMessageHandler(handle, [this, synth, progressHandler, midiOutput, import, automaticCategories](MidiInput *source, const MidiMessage &message) {
 			ignoreUnused(source);
 			auto sequencer = midikraft::Capability::hasCapability<midikraft::DataFileLoadCapability>(synth);
 			if (sequencer->isPartOfDataFileStream(message, import.dataStreamID)) {
@@ -255,7 +255,7 @@ namespace midikraft {
 				if (sequencer->isStreamComplete(currentDownload_, import.dataStreamID)) {
 					auto loadedData = sequencer->loadData(currentDownload_, import.dataStreamID);
 					clearHandlers();
-					onSequencerFinished_(tagPatchesWithImportFromSynth(synth, loadedData, import.description, import.startItemNo));
+					onSequencerFinished_(tagPatchesWithImportFromSynth(synth, loadedData, import.description, import.startItemNo, automaticCategories));
 					if (progressHandler) progressHandler->onSuccess();
 				}
 				else if (progressHandler->shouldAbort()) {
@@ -437,10 +437,6 @@ namespace midikraft {
 		}
 		return result;
 	}
-
-			}
-		return result;
-		}	
 
 	class ExportSysexFilesInBackground: public ThreadWithProgressWindow {
 	public:
@@ -799,11 +795,9 @@ namespace midikraft {
 		return result;
 	}
 
-	std::vector<PatchHolder> Librarian::tagPatchesWithImportFromSynth(std::shared_ptr<Synth> synth, TPatchVector &patches, std::string bankName, int startIndex) {
+	std::vector<PatchHolder> Librarian::tagPatchesWithImportFromSynth(std::shared_ptr<Synth> synth, TPatchVector &patches, std::string bankName, int startIndex, std::shared_ptr<AutomaticCategory> automaticCategories) {
 		std::vector<PatchHolder> result;
 		auto now = Time::getCurrentTime();
-		//TODO - this probably should have been handed down from the main program?
-		auto detector = std::make_shared<midikraft::AutomaticCategory>();
 		int i = 0;
 		for (auto patch : patches) {
 			MidiProgramNumber place = MidiProgramNumber::fromZeroBase(i++);
@@ -811,7 +805,7 @@ namespace midikraft {
 			if (realpatch) {
 				place = realpatch->patchNumber();
 			}
-			result.push_back(PatchHolder(synth, std::make_shared<FromSynthDataType>(now, bankName, startIndex), patch, MidiBankNumber::invalid(), place, detector));
+			result.push_back(PatchHolder(synth, std::make_shared<FromSynthDataType>(now, bankName, startIndex), patch, MidiBankNumber::invalid(), place, automaticCategories));
 		}
 		return result;
 	}
