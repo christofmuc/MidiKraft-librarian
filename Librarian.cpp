@@ -678,16 +678,16 @@ namespace midikraft {
 	void Librarian::startDownloadNextDataItem(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, DataStreamType dataFileIdentifier) {
 		auto sequencer = midikraft::Capability::hasCapability<midikraft::DataFileLoadCapability>(synth);
 		if (sequencer) {
-		std::vector<MidiMessage> request = sequencer->requestDataItem(downloadNumber_, dataFileIdentifier);
-		// If this is a synth, it has a throttled send method
-		if (synth) {
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), request);
+			std::vector<MidiMessage> request = sequencer->requestDataItem(downloadNumber_, dataFileIdentifier);
+			// If this is a synth, it has a throttled send method
+			if (synth) {
+				synth->sendBlockOfMessagesToSynth(midiOutput->name(), request);
+			}
+			else {
+				// This is not a synth... fall back to old behavior
+				midiOutput->sendBlockOfMessagesFullSpeed(request);
+			}
 		}
-		else {
-			// This is not a synth... fall back to old behavior
-			midiOutput->sendBlockOfMessagesFullSpeed(request);
-		}
-	}
 		else {
 			jassertfalse;
 		}
