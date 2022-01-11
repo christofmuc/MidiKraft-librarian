@@ -25,6 +25,7 @@
 #include <boost/format.hpp>
 #include <set>
 #include "Settings.h"
+#include "StoredPatchNumberCapability.h"
 
 namespace midikraft {
 
@@ -752,9 +753,9 @@ namespace midikraft {
 		int i = 0;
 		for (auto patch : patches) {
 			MidiProgramNumber place = MidiProgramNumber::fromZeroBase(i++);
-			auto realpatch = std::dynamic_pointer_cast<Patch>(patch);
-			if (realpatch) {
-				place = realpatch->patchNumber();
+			auto patchNumber = Capability::hasCapability<StoredPatchNumberCapability>(patch);
+			if (patchNumber && patchNumber->hasStoredPatchNumber()) {
+				place = patchNumber->getStoredPatchNumber();
 			}
 			result.push_back(PatchHolder(synth, std::make_shared<FromSynthSource>(now, bankNo), patch, bankNo, place));
 		}
