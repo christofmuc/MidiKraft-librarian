@@ -283,10 +283,10 @@ namespace midikraft {
 			});
 			handles_.push(handle);
 			// Special case - load only a single patch. In this case we're interested in the edit buffer only!
-			startDownloadNumber_ = 0;
-			endDownloadNumber_ = 1;
-			auto message = editBufferCapability->requestEditBufferDump();
-			synth->sendBlockOfMessagesToSynth(midiOutput->name(), message);
+			downloadNumber_ = -1; // Negative index disables MIDI location
+			startDownloadNumber_ = downloadNumber_;
+			endDownloadNumber_ = downloadNumber_ + 1;
+			startDownloadNextEditBuffer(midiOutput, synth);
 		}
 		else if (programDumpCapability && programChangeCapability) {
 			auto messages = programDumpCapability->requestPatch(programChangeCapability->lastProgramChange().toZeroBased());
@@ -713,14 +713,15 @@ namespace midikraft {
 		auto editBufferCapability = midikraft::Capability::hasCapability<EditBufferCapability>(synth);
 		if (editBufferCapability) {
 			currentEditBuffer_.clear();
-			auto midiLocation = midikraft::Capability::hasCapability<MidiLocationCapability>(synth);
-			if (midiLocation) {
-				messages.push_back(MidiMessage::programChange(midiLocation->channel().toOneBasedInt(), downloadNumber_));
-				auto requestMessages = editBufferCapability->requestEditBufferDump();
-				std::copy(requestMessages.cbegin(), requestMessages.cend(), std::back_inserter(messages));
-			}
-			else {
-				SimpleLogger::instance()->postMessage("Error: Can't send to synth because no MIDI location implemented for it");
+			messages = editBufferCapability->requestEditBufferDump();
+			if (downloadNumber_ >= 0) {
+				auto midiLocation = midikraft::Capability::hasCapability<MidiLocationCapability>(synth);
+				if (midiLocation) {
+					messages.insert(messages.begin(), MidiMessage::programChange(midiLocation->channel().toOneBasedInt(), downloadNumber_));
+				}
+				else {
+					SimpleLogger::instance()->postMessage("Error: Can't send to synth because no MIDI location implemented for it");
+				}
 			}
 		}
 		else {
