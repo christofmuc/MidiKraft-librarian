@@ -835,28 +835,28 @@ namespace midikraft {
 	void Librarian::handleNextProgramBuffer(std::shared_ptr<SafeMidiOutput> midiOutput, std::shared_ptr<Synth> synth, ProgressHandler* progressHandler, const juce::MidiMessage& editBuffer, MidiBankNumber bankNo) {
 		auto programDumpCapability = midikraft::Capability::hasCapability<ProgramDumpCabability>(synth);
 		// This message might be a part of a multi-message program dump?
-		if (programDumpCapability->isMessagePartOfProgramDump(editBuffer)) {
+		if (programDumpCapability && programDumpCapability->isMessagePartOfProgramDump(editBuffer)) {
 			currentProgramDump_.push_back(editBuffer);
-		}
-		if (programDumpCapability && programDumpCapability->isSingleProgramDump(currentProgramDump_)) {
-			// Ok, that worked, save it and continue!
-			std::copy(currentProgramDump_.begin(), currentProgramDump_.end(), std::back_inserter(currentDownload_));
+			if (programDumpCapability->isSingleProgramDump(currentProgramDump_)) {
+				// Ok, that worked, save it and continue!
+				std::copy(currentProgramDump_.begin(), currentProgramDump_.end(), std::back_inserter(currentDownload_));
 
-			// Finished?
-			if (downloadNumber_ >= endDownloadNumber_-1) {
-				clearHandlers();
-				auto patches = synth->loadSysex(currentDownload_);
-				onFinished_(tagPatchesWithImportFromSynth(synth, patches, bankNo));
-				if (progressHandler) progressHandler->onSuccess();
-			}
-			else if (progressHandler->shouldAbort()) {
-				clearHandlers();
-				if (progressHandler) progressHandler->onCancel();
-			}
-			else {
-				downloadNumber_++;
-				startDownloadNextPatch(midiOutput, synth);
-				if (progressHandler) progressHandler->setProgressPercentage((downloadNumber_ - startDownloadNumber_) / (double)(endDownloadNumber_ - startDownloadNumber_));
+				// Finished?
+				if (downloadNumber_ >= endDownloadNumber_-1) {
+					clearHandlers();
+					auto patches = synth->loadSysex(currentDownload_);
+					onFinished_(tagPatchesWithImportFromSynth(synth, patches, bankNo));
+					if (progressHandler) progressHandler->onSuccess();
+				}
+				else if (progressHandler->shouldAbort()) {
+					clearHandlers();
+					if (progressHandler) progressHandler->onCancel();
+				}
+				else {
+					downloadNumber_++;
+					startDownloadNextPatch(midiOutput, synth);
+					if (progressHandler) progressHandler->setProgressPercentage((downloadNumber_ - startDownloadNumber_) / (double)(endDownloadNumber_ - startDownloadNumber_));
+				}
 			}
 		}
 	}
